@@ -237,19 +237,16 @@ setInterval(() => {
     for (let id in players) {
         const pBody = players[id].body;
         if (pBody) {
-            // [최적화 핵심] 클라이언트 렌더링에 불필요한 속도(velocity) 데이터를 빼고, 
-            // 무의미하게 긴 소수점을 첫째 자리까지만 반올림하여 네트워크 트래픽 60% 절감
+            // [복구] 물리 엔진의 절대적인 정밀도를 위해 소수점 절사 로직 제거
             syncData[id] = {
                 label: players[id].label,
-                x: Math.round(pBody.position.x * 10) / 10,
-                y: Math.round(pBody.position.y * 10) / 10,
-                angle: Math.round(pBody.angle * 100) / 100
+                x: pBody.position.x, 
+                y: pBody.position.y,
+                angle: pBody.angle
             };
         }
     }
     io.emit('sync_state', syncData);
-
-}, 1000 / 60);
 
 const PORT = 3000;
 server.listen(PORT, () => {
