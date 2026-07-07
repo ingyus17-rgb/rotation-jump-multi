@@ -7,7 +7,7 @@
     <style>
         body { margin: 0; padding: 0; overflow: hidden; background-color: #1a1a2e; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; height: 100dvh; color: white; font-family: 'Segoe UI', sans-serif; touch-action: none; user-select: none; }
         #game-container { position: relative; display: flex; justify-content: center; align-items: center; width: 100vw; height: 100vh; }
-        canvas { background-color: #16213e; border: 3px solid #0f3460; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.8); max-width: 100vw; max-height: 100vh; object-fit: contain; }
+        canvas { background-color: #16213e; border: 3px solid #0f3460; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.8); max-width: 100vw; max-height: 100vh; object-fit: contain; z-index: 1; }
         .controls { position: absolute; top: 10px; width: 100%; text-align: center; pointer-events: none; z-index: 5; opacity: 0.7; }
         #dash-ui { position: absolute; bottom: 20px; right: 20px; font-size: 1rem; font-weight: bold; padding: 8px 15px; border-radius: 8px; background: rgba(0,0,0,0.5); border: 2px solid #e94560; color: #fff; z-index: 10; transition: all 0.2s; }
         .dash-ready { border-color: #60e945 !important; color: #60e945 !important; box-shadow: 0 0 15px rgba(96, 233, 69, 0.5); }
@@ -17,11 +17,15 @@
         .restart-text { display: block; font-size: 4vw; color: #ffffff; margin-top: 15px; animation: blink 1.5s infinite; text-shadow: 0 0 10px rgba(255,255,255,0.5); }
         #slow-mo-text { position: absolute; top: 20%; font-size: 6vw; font-weight: bold; color: #e94560; opacity: 0; transition: opacity 0.2s; pointer-events: none; letter-spacing: 5px; text-shadow: 0 0 10px #e94560; text-align: center; width: 100%; z-index: 5;}
         
-        /* 채팅 UI 스타일 추가 */
-        #chat-container { position: absolute; bottom: 10px; left: 10px; width: 300px; height: 200px; background: rgba(0,0,0,0.4); border-radius: 8px; display: flex; flex-direction: column; z-index: 20; pointer-events: auto; box-shadow: 0 0 10px rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1); }
-        #chat-messages { flex-grow: 1; overflow-y: auto; padding: 10px; font-size: 0.9rem; display: flex; flex-direction: column; gap: 4px; text-shadow: 1px 1px 2px black; pointer-events: none; }
-        #chat-input { background: rgba(0,0,0,0.6); border: none; border-top: 1px solid rgba(255,255,255,0.2); padding: 10px; color: white; outline: none; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; font-family: inherit; }
-        #chat-input:focus { background: rgba(0,0,0,0.8); }
+        /* 1. 최신 메시지 한 줄 표시 UI (평상시) */
+        #latest-msg { position: absolute; bottom: 20px; left: 20px; background: rgba(0,0,0,0.6); padding: 8px 15px; border-radius: 20px; font-size: 0.9rem; color: #fff; border: 1px solid rgba(255,255,255,0.2); cursor: pointer; z-index: 20; max-width: 60%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: auto; transition: all 0.2s; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        #latest-msg:hover { background: rgba(255,255,255,0.2); border-color: #fff; }
+
+        /* 2. 전체 채팅창 UI (클릭 시 열림, 기본은 숨김) */
+        #chat-container { display: none; position: absolute; bottom: 20px; left: 20px; width: 300px; height: 200px; background: rgba(0,0,0,0.75); border-radius: 8px; flex-direction: column; z-index: 30; pointer-events: auto; box-shadow: 0 10px 20px rgba(0,0,0,0.8); border: 1px solid rgba(255,255,255,0.3); backdrop-filter: blur(5px); }
+        #chat-messages { flex-grow: 1; overflow-y: auto; padding: 10px; font-size: 0.9rem; display: flex; flex-direction: column; gap: 4px; text-shadow: 1px 1px 2px black; pointer-events: auto; }
+        #chat-input { background: rgba(0,0,0,0.8); border: none; border-top: 1px solid rgba(255,255,255,0.3); padding: 12px; color: white; outline: none; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; font-family: inherit; font-size: 1rem; }
+        #chat-input:focus { background: rgba(20,20,40,0.9); }
         
         /* 롤별 채팅 색상 */
         .msg-sys { color: #60e945; font-weight: bold; }
@@ -42,9 +46,11 @@
         <div id="ui">GAME OVER</div>
         <div id="slow-mo-text">BULLET TIME</div>
         
+        <div id="latest-msg">💬 대화하려면 여기를 클릭하세요</div>
+
         <div id="chat-container">
             <div id="chat-messages"></div>
-            <input type="text" id="chat-input" placeholder="엔터키를 눌러 대화하세요" autocomplete="off">
+            <input type="text" id="chat-input" placeholder="엔터로 전송 / 빈 화면 터치로 닫기" autocomplete="off">
         </div>
     </div>
 
@@ -199,22 +205,58 @@
         });
 
         // ==========================================
-        // [채팅 로직 추가]
+        // [스마트 채팅 UI 제어 로직]
         // ==========================================
+        const latestMsg = document.getElementById('latest-msg');
+        const chatContainer = document.getElementById('chat-container');
         const chatInput = document.getElementById('chat-input');
         const chatMessages = document.getElementById('chat-messages');
 
-        // 엔터키를 누르면 서버로 메시지 전송
-        chatInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && chatInput.value.trim() !== '') {
-                socket.emit('send_msg', chatInput.value.trim());
-                chatInput.value = ''; // 전송 후 입력창 비우기
+        // 1. 한 줄 채팅 클릭 시 -> 전체 채팅창 열기
+        latestMsg.addEventListener('click', (e) => {
+            e.stopPropagation(); // 클릭 이벤트가 게임 화면으로 넘어가는 것 방지
+            latestMsg.style.display = 'none';
+            chatContainer.style.display = 'flex';
+            chatInput.focus();
+        });
+
+        // 2. 채팅창 닫기 함수 (게임 조작 복귀)
+        function closeChat() {
+            if (chatContainer.style.display === 'flex') {
+                chatContainer.style.display = 'none';
+                latestMsg.style.display = 'block';
+                chatInput.blur(); // 포커스 해제
+            }
+        }
+
+        // 3. 빈 화면(게임 영역) 클릭/터치 시 채팅창 닫기
+        document.getElementById('game-container').addEventListener('mousedown', (e) => {
+            if (!chatContainer.contains(e.target) && e.target !== latestMsg) {
+                closeChat();
+            }
+        });
+        document.getElementById('game-container').addEventListener('touchstart', (e) => {
+            if (!chatContainer.contains(e.target) && e.target !== latestMsg) {
+                closeChat();
             }
         });
 
-        // 서버에서 메시지를 받아서 화면에 그리기
+        // 4. 메시지 전송 및 ESC 닫기
+        chatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                if (chatInput.value.trim() !== '') {
+                    socket.emit('send_msg', chatInput.value.trim());
+                    chatInput.value = ''; // 전송 후 비우기
+                }
+                closeChat(); // 엔터 치면 전송 후 바로 전투로 자동 복귀
+            }
+            if (e.key === 'Escape') {
+                closeChat(); // ESC 키로도 닫기 가능
+            }
+        });
+
+        // 5. 서버에서 메시지 수신
         socket.on('receive_msg', (data) => {
-            const msgEl = document.createElement('div');
             let prefix = '[관전]';
             let colorClass = 'msg-spec';
 
@@ -222,15 +264,20 @@
             else if (data.role === 'bot') { prefix = '[2P]'; colorClass = 'msg-2p'; } 
             else if (data.role === 'sys') { prefix = '📢'; colorClass = 'msg-sys'; }
 
-            msgEl.innerHTML = `<span class="${colorClass}">${prefix}</span> ${data.msg}`;
-            chatMessages.appendChild(msgEl);
+            const formattedMsg = `<span class="${colorClass}">${prefix}</span> ${data.msg}`;
             
-            // 새 메시지가 오면 스크롤을 맨 밑으로 자동 이동
-            chatMessages.scrollTop = chatMessages.scrollHeight;
+            // 전체 채팅창에 추가
+            const msgEl = document.createElement('div');
+            msgEl.innerHTML = formattedMsg;
+            chatMessages.appendChild(msgEl);
+            chatMessages.scrollTop = chatMessages.scrollHeight; // 스크롤 맨 밑으로
+
+            // 닫혀있을 때 최신 메시지 한 줄 업데이트
+            latestMsg.innerHTML = formattedMsg;
         });
 
         // ==========================================
-        // [기존 조작 로직 (채팅 중 무시 기능 포함)]
+        // [조작 로직 (채팅 시 철저한 무시)]
         // ==========================================
         const keys = { left: false, right: false, isDashing: false, dashDirection: 0 };
         const dashCooldown = 5000;
@@ -258,8 +305,8 @@
         }, 1000 / 60);
 
         window.addEventListener('keydown', (e) => { 
-            // [중요] 채팅창에 글씨를 쓰고 있을 때는 방향키 조작 무시!
-            if (document.activeElement === chatInput) return;
+            // 채팅창이 열려있거나 포커스 상태일 때는 조작 키 무시!
+            if (chatContainer.style.display === 'flex' || document.activeElement === chatInput) return;
 
             const time = Date.now();
             if (e.code === 'ArrowLeft') {
@@ -273,16 +320,15 @@
         });
         
         window.addEventListener('keyup', (e) => { 
-            // 채팅 중일 때 키 떼는 이벤트도 무시
-            if (document.activeElement === chatInput) return;
+            if (chatContainer.style.display === 'flex' || document.activeElement === chatInput) return;
 
             if (e.code === 'ArrowLeft') keys.left = false;
             if (e.code === 'ArrowRight') keys.right = false;
         });
 
         function handleTouch(e) {
-            // 터치는 채팅창과 겹칠 수 있으므로 약간의 딜레이나 예외 처리가 필요할 수 있으나 기본 조작 유지
-            if (e.target === chatInput) return; // 채팅창 터치 시 조작 무시
+            // 채팅 UI 영역을 터치했을 때는 게임 캐릭터가 움직이지 않도록 차단
+            if (chatContainer.contains(e.target) || e.target === latestMsg) return; 
 
             e.preventDefault();
             const screenMiddle = window.innerWidth / 2;
