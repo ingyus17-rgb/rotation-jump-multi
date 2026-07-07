@@ -212,4 +212,96 @@ Events.on(engine, 'collisionStart', (event) => {
             let contactX = (bodyA.position.x + bodyB.position.x) / 2; 
             let contactY = (bodyA.position.y + bodyB.position.y) / 2;
             if (pairs[i].collision && pairs[i].collision.supports && pairs[i].collision.supports.length > 0) {
-                contactX = pairs
+                contactX = pairs[i].collision.supports[0].x; 
+                contactY = pairs[i].collision.supports[0].y;
+            }
+            io.emit('create_spark', { x: contactX, y: contactY });
+        }
+    }
+});
+
+// ==========================================
+// [AI 인공지능 로직] 1초마다 거리 계산 후 방향 판단
+// ==========================================
+setInterval(() => {
+    if (!aiState.active || gameState !== 'PLAYING') return;
+    
+    const p1 = players[slots.player];
+    const ai = players['AI_BOT'];
+    
+    if (p1 && p1.body && ai && ai.body) {
+        const dist = Math.hypot(p1.body.position.x - ai.body.position.x, p1.body.position.y - ai.body.position.y);
+        
+        // 거리가 1초 전보다 멀어졌다면 방향을 반대로 꺾어버림!
+        if (dist > aiState.lastDist) {
+            aiState.direction *= -1; 
+        }
+        aiState.lastDist = dist;
+    }
+}, 1000);
+
+let lastTime = Date.now();
+setInterval(() => {
+    const now = Date.now();
+    let delta = now - lastTime;
+    lastTime = now;
+    if (delta > 33) delta = 33; 
+
+    let isSlowMo = false;
+    if (gameState === 'PLAYING') {
+        const p1 = players[slots.player]?.body;
+        // 2P가 있다면 2P의 거리를, 없다면 AI의 거리를 측정
+        const p2 = slots.bot ? players[slots.bot]?.body : players['AI_BOT']?.body;
+        
+        if (p1 && p2) {
+            const dist = Math.hypot(p1.position.x - p2.position.x, p1.position.y - p2.position.y);
+            if (dist < 180) {
+                isSlowMo = true;
+                engine.timing.timeScale = 0.3; 
+            } else {
+                engine.timing.timeScale = 1.0;
+            }
+        }
+    } else {
+        engine.timing.timeScale = 1.0;
+    }
+
+    // ==========================================
+    // [AI 물리 조작 주입] 1초 60번씩 강제로 키보드를 누르는 효과
+    // ==========================================
+    if (aiState.active && gameState === 'PLAYING') {
+        const aiBody = players['AI_BOT']?.body;
+        if (aiBody) {
+            const maxAngularVelocity = 0.3;
+            Body.setAngularVelocity(aiBody, aiState.direction * 0.15);
+            if (Math.abs(aiBody.angularVelocity) > maxAngularVelocity) {
+                Body.setAngularVelocity(aiBody, Math.sign(aiBody.angularVelocity) * maxAngularVelocity);
+            }
+        }
+    }
+
+    Engine.update(engine, delta);
+
+    const syncData = { _isSlowMo: isSlowMo }; 
+    
+    for (let id in players) {
+        const pBody = players[id].body;
+        if (pBody) {
+            syncData[id] = {
+                label: players[id].label,
+                x: pBody.position.x,
+                y: pBody.position.y,
+                angle: pBody.angle,
+                velocity: pBody.velocity,
+                angularVelocity: pBody.angularVelocity
+            };
+        }
+    }
+    io.emit('sync_state', syncData);
+
+}, 1000 / 60);
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+    console.log(`서버 가동 중 (Port: ${PORT})`);
+});
