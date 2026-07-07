@@ -16,6 +16,18 @@
         @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
         .restart-text { display: block; font-size: 4vw; color: #ffffff; margin-top: 15px; animation: blink 1.5s infinite; text-shadow: 0 0 10px rgba(255,255,255,0.5); }
         #slow-mo-text { position: absolute; top: 20%; font-size: 6vw; font-weight: bold; color: #e94560; opacity: 0; transition: opacity 0.2s; pointer-events: none; letter-spacing: 5px; text-shadow: 0 0 10px #e94560; text-align: center; width: 100%; z-index: 5;}
+        
+        /* 채팅 UI 스타일 추가 */
+        #chat-container { position: absolute; bottom: 10px; left: 10px; width: 300px; height: 200px; background: rgba(0,0,0,0.4); border-radius: 8px; display: flex; flex-direction: column; z-index: 20; pointer-events: auto; box-shadow: 0 0 10px rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1); }
+        #chat-messages { flex-grow: 1; overflow-y: auto; padding: 10px; font-size: 0.9rem; display: flex; flex-direction: column; gap: 4px; text-shadow: 1px 1px 2px black; pointer-events: none; }
+        #chat-input { background: rgba(0,0,0,0.6); border: none; border-top: 1px solid rgba(255,255,255,0.2); padding: 10px; color: white; outline: none; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; font-family: inherit; }
+        #chat-input:focus { background: rgba(0,0,0,0.8); }
+        
+        /* 롤별 채팅 색상 */
+        .msg-sys { color: #60e945; font-weight: bold; }
+        .msg-1p { color: #f9d342; font-weight: bold; }
+        .msg-2p { color: #42cbf9; font-weight: bold; }
+        .msg-spec { color: #aaaaaa; font-style: italic; }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
     <script src="/socket.io/socket.io.js"></script>
@@ -29,6 +41,11 @@
         <div id="dash-ui" class="dash-ready">DASH: READY</div>
         <div id="ui">GAME OVER</div>
         <div id="slow-mo-text">BULLET TIME</div>
+        
+        <div id="chat-container">
+            <div id="chat-messages"></div>
+            <input type="text" id="chat-input" placeholder="엔터키를 눌러 대화하세요" autocomplete="off">
+        </div>
     </div>
 
     <script>
@@ -150,7 +167,6 @@
 
         socket.on('game_over', (data) => {
             createExplosion(data.x, data.y, data.loserLabel);
-            
             const restartMsg = "<br><span class='restart-text'><span id='countdown-num'>3</span>초 후 재시작됩니다...</span>";
 
             if (myRole === data.winnerLabel) {
@@ -182,6 +198,40 @@
             ui.style.display = 'block';
         });
 
+        // ==========================================
+        // [채팅 로직 추가]
+        // ==========================================
+        const chatInput = document.getElementById('chat-input');
+        const chatMessages = document.getElementById('chat-messages');
+
+        // 엔터키를 누르면 서버로 메시지 전송
+        chatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && chatInput.value.trim() !== '') {
+                socket.emit('send_msg', chatInput.value.trim());
+                chatInput.value = ''; // 전송 후 입력창 비우기
+            }
+        });
+
+        // 서버에서 메시지를 받아서 화면에 그리기
+        socket.on('receive_msg', (data) => {
+            const msgEl = document.createElement('div');
+            let prefix = '[관전]';
+            let colorClass = 'msg-spec';
+
+            if (data.role === 'player') { prefix = '[1P]'; colorClass = 'msg-1p'; } 
+            else if (data.role === 'bot') { prefix = '[2P]'; colorClass = 'msg-2p'; } 
+            else if (data.role === 'sys') { prefix = '📢'; colorClass = 'msg-sys'; }
+
+            msgEl.innerHTML = `<span class="${colorClass}">${prefix}</span> ${data.msg}`;
+            chatMessages.appendChild(msgEl);
+            
+            // 새 메시지가 오면 스크롤을 맨 밑으로 자동 이동
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        });
+
+        // ==========================================
+        // [기존 조작 로직 (채팅 중 무시 기능 포함)]
+        // ==========================================
         const keys = { left: false, right: false, isDashing: false, dashDirection: 0 };
         const dashCooldown = 5000;
         let lastLeftPress = 0, lastRightPress = 0, lastDashTime = 0;
@@ -208,6 +258,9 @@
         }, 1000 / 60);
 
         window.addEventListener('keydown', (e) => { 
+            // [중요] 채팅창에 글씨를 쓰고 있을 때는 방향키 조작 무시!
+            if (document.activeElement === chatInput) return;
+
             const time = Date.now();
             if (e.code === 'ArrowLeft') {
                 if (!keys.left && time - lastLeftPress < doubleTapThreshold && time - lastDashTime >= dashCooldown) triggerDash(-1);
@@ -218,12 +271,19 @@
                 lastRightPress = time; keys.right = true;
             }
         });
+        
         window.addEventListener('keyup', (e) => { 
+            // 채팅 중일 때 키 떼는 이벤트도 무시
+            if (document.activeElement === chatInput) return;
+
             if (e.code === 'ArrowLeft') keys.left = false;
             if (e.code === 'ArrowRight') keys.right = false;
         });
 
         function handleTouch(e) {
+            // 터치는 채팅창과 겹칠 수 있으므로 약간의 딜레이나 예외 처리가 필요할 수 있으나 기본 조작 유지
+            if (e.target === chatInput) return; // 채팅창 터치 시 조작 무시
+
             e.preventDefault();
             const screenMiddle = window.innerWidth / 2;
             let isLeftTouched = false, isRightTouched = false;
