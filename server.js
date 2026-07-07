@@ -10,10 +10,8 @@ const io = new Server(server);
 app.use(express.static('public'));
 
 const { Engine, Bodies, Body, Composite, Events } = Matter;
-// 엔진 안정성(관통 방지)을 위해 반복 연산 횟수 상향
 const engine = Engine.create({ positionIterations: 16, velocityIterations: 12 });
 
-// 우주 밖으로 날아가는 것을 방지하기 위해 천장(ceiling) 추가
 const ground = Bodies.rectangle(450, 520, 910, 120, { isStatic: true, friction: 1.0 });
 const ceiling = Bodies.rectangle(450, -100, 910, 100, { isStatic: true }); 
 const leftWall = Bodies.rectangle(-10, -4725, 20, 10550, { isStatic: true });
@@ -31,34 +29,29 @@ const slots = { player: null, bot: null };
 let gameState = 'WAITING'; 
 let restartTimer = null;
 
-const aiState = {
-    active: false
-};
+const aiState = { active: false };
 
 function resetUniverse() {
     for (let id in players) {
-        if (players[id].body) {
-            Composite.remove(engine.world, players[id].body);
-        }
+        if (players[id].body) Composite.remove(engine.world, players[id].body);
     }
     players = {}; 
 
     if (slots.player) {
         const body1 = createCharacter(300, 300, 'player');
         Composite.add(engine.world, body1);
-        players[slots.player] = { body: body1, label: 'player' };
+        players[slots.player] = { body: body1, label: 'player', keys: {}, dash: { active: false, dir: 1, angleMoved: 0 } };
     }
 
     if (slots.bot) {
         const body2 = createCharacter(600, 300, 'bot');
         Composite.add(engine.world, body2);
-        players[slots.bot] = { body: body2, label: 'bot' };
+        players[slots.bot] = { body: body2, label: 'bot', keys: {}, dash: { active: false, dir: 1, angleMoved: 0 } };
         aiState.active = false; 
     } else if (slots.player) {
-        // 1P 혼자일 때 AI 스폰
         const aiBody = createCharacter(600, 300, 'bot');
         Composite.add(engine.world, aiBody);
-        players['AI_BOT'] = { body: aiBody, label: 'bot' };
+        players['AI_BOT'] = { body: aiBody, label: 'bot', keys: {}, dash: { active: false } };
         aiState.active = true; 
     }
 
@@ -69,13 +62,8 @@ function resetUniverse() {
 io.on('connection', (socket) => {
     let myRole = null;
 
-    if (!slots.player) {
-        myRole = 'player';
-        slots.player = socket.id;
-    } else if (!slots.bot) {
-        myRole = 'bot';
-        slots.bot = socket.id;
-    }
+    if (!slots.player) { myRole = 'player'; slots.player = socket.id; } 
+    else if (!slots.bot) { myRole = 'bot'; slots.bot = socket.id; }
 
     if (myRole) {
         socket.emit('role_assign', { id: socket.id, label: myRole });
@@ -86,7 +74,6 @@ io.on('connection', (socket) => {
         } else if (myRole === 'player' && !slots.bot) {
             io.emit('receive_msg', { role: 'sys', msg: '상대방을 기다리는 동안 AI와 대련하세요.' });
         }
-        
         resetUniverse(); 
     } else {
         socket.emit('spectator', '방이 가득 차 관전 모드로 전환됩니다.');
@@ -99,24 +86,20 @@ io.on('connection', (socket) => {
         io.emit('receive_msg', { role: currentRole, msg: msg });
     });
 
-    socket.on('player_input', (inputData) => {
-        if (gameState !== 'PLAYING') return; 
-
+    // [핵심 변경] 클라이언트의 키보드 상태만 저장함 (물리 적용은 메인 루프에서 일괄 처리)
+    socket.on('player_input', (keys) => {
         const p = players[socket.id];
-        if (!p || !p.body) return;
+        if (p) p.keys = keys;
+    });
 
-        const maxAngularVelocity = 0.3;
-        const baseRotationSpeed = 0.15;
-
-        if (inputData.isDashing) {
-            Body.setAngularVelocity(p.body, inputData.dashDirection * 0.6);
-        } else {
-            if (inputData.left) Body.setAngularVelocity(p.body, -baseRotationSpeed);
-            else if (inputData.right) Body.setAngularVelocity(p.body, baseRotationSpeed);
-            
-            if (Math.abs(p.body.angularVelocity) > maxAngularVelocity) {
-                Body.setAngularVelocity(p.body, Math.sign(p.body.angularVelocity) * maxAngularVelocity);
-            }
+    // [핵심 변경] 대시 트리거 전용 소켓 이벤트 신설
+    socket.on('do_dash', (dir) => {
+        if (gameState !== 'PLAYING') return;
+        const p = players[socket.id];
+        if (p && !p.dash.active) {
+            p.dash.active = true;
+            p.dash.dir = dir;
+            p.dash.angleMoved = 0; // 누적 각도 0으로 초기화
         }
     });
 
@@ -162,15 +145,11 @@ Events.on(engine, 'collisionStart', (event) => {
         let winnerLabel = null;
         let loserLabel = null;
 
-        if (checkKill(bodyA.label, bodyB.label, 'playerStick', 'botCore')) {
-            winnerLabel = 'player'; loserLabel = 'bot';
-        } else if (checkKill(bodyA.label, bodyB.label, 'botStick', 'playerCore')) {
-            winnerLabel = 'bot'; loserLabel = 'player';
-        }
+        if (checkKill(bodyA.label, bodyB.label, 'playerStick', 'botCore')) { winnerLabel = 'player'; loserLabel = 'bot'; } 
+        else if (checkKill(bodyA.label, bodyB.label, 'botStick', 'playerCore')) { winnerLabel = 'bot'; loserLabel = 'player'; }
 
         if (winnerLabel && loserLabel) {
             gameState = 'GAME_OVER';
-            
             let loserId = Object.keys(players).find(id => players[id].label === loserLabel);
             if (loserId && players[loserId].body) {
                 const loserBody = players[loserId].body;
@@ -180,23 +159,14 @@ Events.on(engine, 'collisionStart', (event) => {
                 Composite.remove(engine.world, loserBody);
                 players[loserId].body = null; 
 
-                io.emit('game_over', { 
-                    winnerLabel: winnerLabel, 
-                    loserLabel: loserLabel, 
-                    x: deathX, 
-                    y: deathY 
-                });
+                io.emit('game_over', { winnerLabel, loserLabel, x: deathX, y: deathY });
 
                 clearInterval(restartTimer);
                 let count = 3;
                 restartTimer = setInterval(() => {
                     count--;
-                    if (count > 0) {
-                        io.emit('countdown', count); 
-                    } else {
-                        clearInterval(restartTimer);
-                        resetUniverse(); 
-                    }
+                    if (count > 0) io.emit('countdown', count); 
+                    else { clearInterval(restartTimer); resetUniverse(); }
                 }, 1000);
             }
             continue; 
@@ -224,46 +194,58 @@ setInterval(() => {
 
     let isSlowMo = false;
     if (gameState === 'PLAYING') {
-        let p1Body = null;
-        let p2Body = null;
-
-        if (players[slots.player]) p1Body = players[slots.player].body;
-        
-        if (slots.bot && players[slots.bot]) {
-            p2Body = players[slots.bot].body;
-        } else if (!slots.bot && players['AI_BOT']) {
-            p2Body = players['AI_BOT'].body;
-        }
+        let p1Body = players[slots.player] ? players[slots.player].body : null;
+        let p2Body = slots.bot && players[slots.bot] ? players[slots.bot].body : (players['AI_BOT'] ? players['AI_BOT'].body : null);
         
         if (p1Body && p2Body) {
             const dist = Math.hypot(p1Body.position.x - p2Body.position.x, p1Body.position.y - p2Body.position.y);
-            if (dist < 180) {
-                isSlowMo = true;
-                engine.timing.timeScale = 0.3; 
-            } else {
-                engine.timing.timeScale = 1.0;
-            }
+            if (dist < 180) { isSlowMo = true; engine.timing.timeScale = 0.3; } 
+            else { engine.timing.timeScale = 1.0; }
         }
-    } else {
-        engine.timing.timeScale = 1.0;
-    }
+    } else { engine.timing.timeScale = 1.0; }
 
     // ==========================================
-    // [스마트 AI 로직] 속도 제한형 추적 알고리즘 적용
+    // [가장 완벽한 물리 통제 루프] 모든 입력과 대시를 이곳에서 일괄 처리
     // ==========================================
-    if (aiState.active && gameState === 'PLAYING') {
-        let p1Body = players[slots.player] ? players[slots.player].body : null;
-        let aiBody = players['AI_BOT'] ? players['AI_BOT'].body : null;
+    for (let id in players) {
+        const p = players[id];
+        if (!p.body || gameState !== 'PLAYING') continue;
 
-        if (p1Body && aiBody) {
-            let dx = p1Body.position.x - aiBody.position.x;
-            let aiSpeedX = aiBody.velocity.x;
+        // 1. AI 로직
+        if (id === 'AI_BOT' && aiState.active) {
+            let p1Body = players[slots.player] ? players[slots.player].body : null;
+            if (p1Body) {
+                let dx = p1Body.position.x - p.body.position.x;
+                let aiSpeedX = p.body.velocity.x;
+                if (dx < -30 && aiSpeedX > -6) Body.setAngularVelocity(p.body, -0.12);
+                else if (dx > 30 && aiSpeedX < 6) Body.setAngularVelocity(p.body, 0.12);
+            }
+            continue;
+        }
+
+        // 2. 플레이어 대시 로직 (시간이 아닌 각도 타겟팅!)
+        if (p.dash && p.dash.active) {
+            const dashSpeed = 0.6;
+            Body.setAngularVelocity(p.body, p.dash.dir * dashSpeed);
             
-            // 거리가 멀고, AI가 과속(돌진) 상태가 아닐 때만 회전력을 주어 안전하게 굴러가도록 통제
-            if (dx < -30 && aiSpeedX > -6) {
-                Body.setAngularVelocity(aiBody, -0.12);
-            } else if (dx > 30 && aiSpeedX < 6) {
-                Body.setAngularVelocity(aiBody, 0.12);
+            // 현재 프레임에서 실제로 돌아간 각도를 누적 (시간 지연 비율 완벽 반영)
+            p.dash.angleMoved += dashSpeed * engine.timing.timeScale;
+            
+            // 누적 각도가 2PI (약 360도)에 도달하면 대시를 강제로 종료!
+            if (p.dash.angleMoved >= Math.PI * 2) {
+                p.dash.active = false;
+            }
+        } 
+        // 3. 일반 방향키 조작 (대시 중이 아닐 때만)
+        else if (p.keys) {
+            const maxAngularVelocity = 0.3;
+            const baseRotationSpeed = 0.15;
+            
+            if (p.keys.left) Body.setAngularVelocity(p.body, -baseRotationSpeed);
+            else if (p.keys.right) Body.setAngularVelocity(p.body, baseRotationSpeed);
+            
+            if (Math.abs(p.body.angularVelocity) > maxAngularVelocity) {
+                Body.setAngularVelocity(p.body, Math.sign(p.body.angularVelocity) * maxAngularVelocity);
             }
         }
     }
@@ -271,18 +253,10 @@ setInterval(() => {
     Engine.update(engine, delta);
 
     const syncData = { _isSlowMo: isSlowMo }; 
-    
     for (let id in players) {
         const pBody = players[id].body;
         if (pBody) {
-            syncData[id] = {
-                label: players[id].label,
-                x: pBody.position.x,
-                y: pBody.position.y,
-                angle: pBody.angle,
-                velocity: pBody.velocity,
-                angularVelocity: pBody.angularVelocity
-            };
+            syncData[id] = { label: players[id].label, x: pBody.position.x, y: pBody.position.y, angle: pBody.angle };
         }
     }
     io.emit('sync_state', syncData);
