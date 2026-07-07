@@ -18,11 +18,21 @@ const leftWall = Bodies.rectangle(-10, -4725, 20, 10550, { isStatic: true });
 const rightWall = Bodies.rectangle(910, -4725, 20, 10550, { isStatic: true });
 Composite.add(engine.world, [ground, ceiling, leftWall, rightWall]);
 
+// ... (위쪽 코드 동일) ...
+
 function createCharacter(x, y, name) {
     const core = Bodies.circle(x, y, 25, { label: name + 'Core', density: 1.0 });
-    const stick = Bodies.rectangle(x + 60, y, 100, 30, { label: name + 'Stick', chamfer: { radius: 10 }, density: 0.0001 });
-    return Body.create({ parts: [core, stick], friction: 0.8, restitution: 0.8, label: name });
+    
+    // [조작감 완벽 복구] 두께를 30 -> 15로, 모서리(chamfer)를 10 -> 5로 원상복구. 
+    // game26.html 시절의 날렵한 관성 모멘트를 되찾습니다.
+    const stick = Bodies.rectangle(x + 60, y, 100, 15, { label: name + 'Stick', chamfer: { radius: 5 }, density: 0.0001 });
+    
+    // [핵심 물리 패치] isBullet: true 속성 부여. 
+    // 두께를 늘리지 않아도 물리 엔진이 탄환(Bullet)처럼 이동 궤적 전체의 충돌을 연속 계산(CCD)하여 절대 관통되지 않음.
+    return Body.create({ parts: [core, stick], friction: 0.8, restitution: 0.8, label: name, isBullet: true });
 }
+
+// ... (아래쪽 코드 동일) ...
 
 let players = {}; 
 const slots = { player: null, bot: null }; 
