@@ -28,9 +28,6 @@ const slots = { player: null, bot: null };
 let gameState = 'WAITING'; 
 let restartTimer = null;
 
-// ==========================================
-// [AI 시스템 뇌(State) 영역]
-// ==========================================
 const aiState = {
     active: false,
     direction: 1,
@@ -52,13 +49,11 @@ function resetUniverse() {
     }
 
     if (slots.bot) {
-        // 실제 사람 2P가 있을 때
         const body2 = createCharacter(600, 300, 'bot');
         Composite.add(engine.world, body2);
         players[slots.bot] = { body: body2, label: 'bot' };
-        aiState.active = false; // AI 비활성화
+        aiState.active = false; 
     } else if (slots.player) {
-        // 1P 혼자 있을 때 AI 즉시 창조
         const aiBody = createCharacter(600, 300, 'bot');
         Composite.add(engine.world, aiBody);
         players['AI_BOT'] = { body: aiBody, label: 'bot' };
@@ -91,7 +86,7 @@ io.on('connection', (socket) => {
             io.emit('receive_msg', { role: 'sys', msg: '상대방을 기다리는 동안 AI와 대련하세요.' });
         }
         
-        resetUniverse(); // 누군가 들어오면 무조건 판을 리셋 (AI가 있든 없든)
+        resetUniverse(); 
     } else {
         socket.emit('spectator', '방이 가득 차 관전 모드로 전환됩니다.');
     }
@@ -133,7 +128,6 @@ io.on('connection', (socket) => {
 
         io.emit('receive_msg', { role: 'sys', msg: `${leftRole} 님이 도망쳤습니다.` });
 
-        // 2P만 남았을 경우 1P 자리로 승격시키고 AI랑 붙여주기
         if (!slots.player && slots.bot) {
             slots.player = slots.bot;
             slots.bot = null;
@@ -220,19 +214,18 @@ Events.on(engine, 'collisionStart', (event) => {
     }
 });
 
-// ==========================================
-// [AI 인공지능 로직] 1초마다 거리 계산 후 방향 판단
-// ==========================================
 setInterval(() => {
     if (!aiState.active || gameState !== 'PLAYING') return;
     
-    const p1 = players[slots.player];
-    const ai = players['AI_BOT'];
+    let p1 = null;
+    let ai = null;
+    
+    if (players[slots.player]) p1 = players[slots.player];
+    if (players['AI_BOT']) ai = players['AI_BOT'];
     
     if (p1 && p1.body && ai && ai.body) {
         const dist = Math.hypot(p1.body.position.x - ai.body.position.x, p1.body.position.y - ai.body.position.y);
         
-        // 거리가 1초 전보다 멀어졌다면 방향을 반대로 꺾어버림!
         if (dist > aiState.lastDist) {
             aiState.direction *= -1; 
         }
@@ -249,12 +242,19 @@ setInterval(() => {
 
     let isSlowMo = false;
     if (gameState === 'PLAYING') {
-        const p1 = players[slots.player]?.body;
-        // 2P가 있다면 2P의 거리를, 없다면 AI의 거리를 측정
-        const p2 = slots.bot ? players[slots.bot]?.body : players['AI_BOT']?.body;
+        let p1Body = null;
+        let p2Body = null;
+
+        if (players[slots.player]) p1Body = players[slots.player].body;
         
-        if (p1 && p2) {
-            const dist = Math.hypot(p1.position.x - p2.position.x, p1.position.y - p2.position.y);
+        if (slots.bot && players[slots.bot]) {
+            p2Body = players[slots.bot].body;
+        } else if (!slots.bot && players['AI_BOT']) {
+            p2Body = players['AI_BOT'].body;
+        }
+        
+        if (p1Body && p2Body) {
+            const dist = Math.hypot(p1Body.position.x - p2Body.position.x, p1Body.position.y - p2Body.position.y);
             if (dist < 180) {
                 isSlowMo = true;
                 engine.timing.timeScale = 0.3; 
@@ -266,12 +266,9 @@ setInterval(() => {
         engine.timing.timeScale = 1.0;
     }
 
-    // ==========================================
-    // [AI 물리 조작 주입] 1초 60번씩 강제로 키보드를 누르는 효과
-    // ==========================================
     if (aiState.active && gameState === 'PLAYING') {
-        const aiBody = players['AI_BOT']?.body;
-        if (aiBody) {
+        if (players['AI_BOT'] && players['AI_BOT'].body) {
+            const aiBody = players['AI_BOT'].body;
             const maxAngularVelocity = 0.3;
             Body.setAngularVelocity(aiBody, aiState.direction * 0.15);
             if (Math.abs(aiBody.angularVelocity) > maxAngularVelocity) {
