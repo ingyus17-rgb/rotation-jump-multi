@@ -23,17 +23,12 @@ function createCharacter(x, y, name) {
     return Body.create({ parts: [core, stick], friction: 0.8, restitution: 0.8, label: name });
 }
 
-// ==========================================
-// [시스템 구조 개편] 유한 상태 기계 및 슬롯 시스템
-// ==========================================
 const players = {}; 
-const slots = { player: null, bot: null }; // 자리(Slot) 추적
-let gameState = 'WAITING'; // 상태: WAITING, PLAYING, GAME_OVER
+const slots = { player: null, bot: null }; 
+let gameState = 'WAITING'; 
 let restartTimer = null;
 
-// 우주(물리계)를 초기 상태로 복원하는 함수
 function resetUniverse() {
-    // 1. 기존 잔재 완전 소멸
     for (let id in players) {
         if (players[id].body) {
             Composite.remove(engine.world, players[id].body);
@@ -41,7 +36,6 @@ function resetUniverse() {
         }
     }
 
-    // 2. 현재 접속해 있는 플레이어들을 초기 좌표에 재창조
     if (slots.player) {
         const body1 = createCharacter(300, 300, 'player');
         Composite.add(engine.world, body1);
@@ -53,7 +47,6 @@ function resetUniverse() {
         players[slots.bot] = { body: body2, label: 'bot' };
     }
 
-    // 3. 2명이 꽉 찼다면 즉시 전투 개시, 아니면 대기 상태
     gameState = (slots.player && slots.bot) ? 'PLAYING' : 'WAITING';
     io.emit('game_reset'); 
 }
@@ -61,7 +54,6 @@ function resetUniverse() {
 io.on('connection', (socket) => {
     let myRole = null;
 
-    // 슬롯 기반 역할 배정 (2P 중복 차단)
     if (!slots.player) {
         myRole = 'player';
         slots.player = socket.id;
@@ -77,13 +69,11 @@ io.on('connection', (socket) => {
             Composite.add(engine.world, pBody);
             players[socket.id] = { body: pBody, label: myRole };
             
-            // 두 명이 모이면 즉시 전투 개시
             if (slots.player && slots.bot && gameState === 'WAITING') {
                 gameState = 'PLAYING';
                 io.emit('game_reset'); 
             }
         } else {
-            // 게임 오버 상태일 때 들어오면 껍데기만 만듦 (곧 resetUniverse가 덮어씌움)
             players[socket.id] = { body: null, label: myRole };
         }
         socket.emit('role_assign', { id: socket.id, label: myRole });
@@ -92,7 +82,7 @@ io.on('connection', (socket) => {
     }
 
     socket.on('player_input', (inputData) => {
-        if (gameState !== 'PLAYING') return; // 게임 중이 아니면 조작 무력화
+        if (gameState !== 'PLAYING') return; 
 
         const p = players[socket.id];
         if (!p || !p.body) return;
@@ -113,7 +103,6 @@ io.on('connection', (socket) => {
     });
 
     socket.on('disconnect', () => {
-        // 나간 사람의 슬롯 비우기
         if (slots.player === socket.id) slots.player = null;
         if (slots.bot === socket.id) slots.bot = null;
 
@@ -124,10 +113,9 @@ io.on('connection', (socket) => {
             delete players[socket.id];
         }
 
-        // 1명이라도 나갔다면 강제 대기 상태 돌입
         if (!slots.player || !slots.bot) {
             gameState = 'WAITING';
-            clearInterval(restartTimer); // <--- 여기를 clearInterval로 수정
+            clearInterval(restartTimer); 
             io.emit('waiting_players');
         }
     });
@@ -155,7 +143,6 @@ Events.on(engine, 'collisionStart', (event) => {
         }
 
         if (winnerLabel && loserLabel) {
-            // 시간의 흐름을 게임 오버 상태로 고정
             gameState = 'GAME_OVER';
             
             let loserId = Object.keys(players).find(id => players[id].label === loserLabel);
@@ -174,16 +161,15 @@ Events.on(engine, 'collisionStart', (event) => {
                     y: deathY 
                 });
 
-                // 3초 후 새로운 세계 재창조 (오토 리플레이 + 1초 단위 카운트다운)
                 clearInterval(restartTimer);
                 let count = 3;
                 restartTimer = setInterval(() => {
                     count--;
                     if (count > 0) {
-                        io.emit('countdown', count); // 2, 1 숫자를 클라이언트에 전송
+                        io.emit('countdown', count); 
                     } else {
                         clearInterval(restartTimer);
-                        resetUniverse(); // 0이 되면 게임 재시작
+                        resetUniverse(); 
                     }
                 }, 1000);
             }
@@ -203,9 +189,6 @@ Events.on(engine, 'collisionStart', (event) => {
     }
 });
 
-// ==========================================
-// [3] 메인 서버 게임 루프 (데이터 압축 최적화 적용)
-// ==========================================
 let lastTime = Date.now();
 setInterval(() => {
     const now = Date.now();
@@ -229,29 +212,29 @@ setInterval(() => {
         engine.timing.timeScale = 1.0;
     }
 
-    // 서버 연산량 최적화 (반복 계산 횟수 축소)
-    Engine.update(engine, delta, { positionIterations: 6, velocityIterations: 4 });
+    Engine.update(engine, delta);
 
     const syncData = { _isSlowMo: isSlowMo }; 
     
     for (let id in players) {
         const pBody = players[id].body;
         if (pBody) {
-            // [복구] 물리 엔진의 절대적인 정밀도를 위해 소수점 절사 로직 제거
             syncData[id] = {
                 label: players[id].label,
-                x: pBody.position.x, 
+                x: pBody.position.x,
                 y: pBody.position.y,
-                angle: pBody.angle
+                angle: pBody.angle,
+                velocity: pBody.velocity,
+                angularVelocity: pBody.angularVelocity
             };
         }
     }
     io.emit('sync_state', syncData);
 
-const PORT = 3000;
+}, 1000 / 60);
+
+// 클라우드 환경 호환 포트 바인딩
+const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-    console.log(`=========================================`);
     console.log(`서버 가동 중 (Port: ${PORT})`);
-    console.log(`[SYS] 오토 리플레이 및 FSM 코어 활성화 완료`);
-    console.log(`=========================================`);
 });
