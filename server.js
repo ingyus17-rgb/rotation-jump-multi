@@ -20,7 +20,7 @@ Composite.add(engine.world, [ground, ceiling, leftWall, rightWall]);
 
 function createCharacter(x, y, name) {
     const core = Bodies.circle(x, y, 25, { label: name + 'Core', density: 1.0 });
-    const stick = Bodies.rectangle(x + 60, y, 100, 15, { label: name + 'Stick', chamfer: { radius: 5 }, density: 0.0001 });
+    const stick = Bodies.rectangle(x + 60, y, 100, 30, { label: name + 'Stick', chamfer: { radius: 10 }, density: 0.0001 });
     return Body.create({ parts: [core, stick], friction: 0.8, restitution: 0.8, label: name });
 }
 
@@ -32,6 +32,7 @@ let restartTimer = null;
 const aiState = { active: false };
 
 function resetUniverse() {
+    // 1. 기존에 남아있는 모든 육체를 물리 엔진에서 완벽하게 소각(제거)
     for (let id in players) {
         if (players[id].body) Composite.remove(engine.world, players[id].body);
     }
@@ -45,11 +46,13 @@ function resetUniverse() {
 
     if (slots.bot) {
         const body2 = createCharacter(600, 300, 'bot');
+        Body.setAngle(body2, Math.PI); // [개선] 2P는 1P를 바라보도록 180도 회전하여 스폰
         Composite.add(engine.world, body2);
         players[slots.bot] = { body: body2, label: 'bot', keys: {}, dash: { active: false, dir: 1, angleMoved: 0 } };
         aiState.active = false; 
     } else if (slots.player) {
         const aiBody = createCharacter(600, 300, 'bot');
+        Body.setAngle(aiBody, Math.PI); // [개선] AI도 1P를 바라보도록 180도 회전
         Composite.add(engine.world, aiBody);
         players['AI_BOT'] = { body: aiBody, label: 'bot', keys: {}, dash: { active: false } };
         aiState.active = true; 
@@ -86,20 +89,18 @@ io.on('connection', (socket) => {
         io.emit('receive_msg', { role: currentRole, msg: msg });
     });
 
-    // [핵심 변경] 클라이언트의 키보드 상태만 저장함 (물리 적용은 메인 루프에서 일괄 처리)
     socket.on('player_input', (keys) => {
         const p = players[socket.id];
         if (p) p.keys = keys;
     });
 
-    // [핵심 변경] 대시 트리거 전용 소켓 이벤트 신설
     socket.on('do_dash', (dir) => {
         if (gameState !== 'PLAYING') return;
         const p = players[socket.id];
         if (p && !p.dash.active) {
             p.dash.active = true;
             p.dash.dir = dir;
-            p.dash.angleMoved = 0; // 누적 각도 0으로 초기화
+            p.dash.angleMoved = 0; 
         }
     });
 
@@ -122,7 +123,13 @@ io.on('connection', (socket) => {
         if (!slots.player) {
             gameState = 'WAITING';
             aiState.active = false;
-            players = {};
+            
+            // [핵심 픽스] 방이 텅 빌 때, 남은 유령(AI 등)을 물리 엔진에서 확실히 제거
+            for (let id in players) {
+                if (players[id].body) Composite.remove(engine.world, players[id].body);
+            }
+            players = {}; // 육체를 먼저 지우고 정보를 날려야 함
+            
             clearInterval(restartTimer); 
         } else {
             resetUniverse(); 
@@ -204,14 +211,10 @@ setInterval(() => {
         }
     } else { engine.timing.timeScale = 1.0; }
 
-    // ==========================================
-    // [가장 완벽한 물리 통제 루프] 모든 입력과 대시를 이곳에서 일괄 처리
-    // ==========================================
     for (let id in players) {
         const p = players[id];
         if (!p.body || gameState !== 'PLAYING') continue;
 
-        // 1. AI 로직
         if (id === 'AI_BOT' && aiState.active) {
             let p1Body = players[slots.player] ? players[slots.player].body : null;
             if (p1Body) {
@@ -223,20 +226,14 @@ setInterval(() => {
             continue;
         }
 
-        // 2. 플레이어 대시 로직 (시간이 아닌 각도 타겟팅!)
         if (p.dash && p.dash.active) {
             const dashSpeed = 0.6;
             Body.setAngularVelocity(p.body, p.dash.dir * dashSpeed);
-            
-            // 현재 프레임에서 실제로 돌아간 각도를 누적 (시간 지연 비율 완벽 반영)
             p.dash.angleMoved += dashSpeed * engine.timing.timeScale;
-            
-            // 누적 각도가 2PI (약 360도)에 도달하면 대시를 강제로 종료!
             if (p.dash.angleMoved >= Math.PI * 2) {
                 p.dash.active = false;
             }
         } 
-        // 3. 일반 방향키 조작 (대시 중이 아닐 때만)
         else if (p.keys) {
             const maxAngularVelocity = 0.3;
             const baseRotationSpeed = 0.15;
@@ -250,7 +247,8 @@ setInterval(() => {
         }
     }
 
-    Engine.update(engine, delta);
+    Engine.update(engine, delta / 2);
+    Engine.update(engine, delta / 2);
 
     const syncData = { _isSlowMo: isSlowMo }; 
     for (let id in players) {
