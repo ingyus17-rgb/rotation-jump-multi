@@ -10,7 +10,9 @@ const io = new Server(server);
 app.use(express.static('public'));
 
 const { Engine, Bodies, Body, Composite, Events } = Matter;
-const engine = Engine.create({ positionIterations: 16, velocityIterations: 12 });
+
+// [복구 1] game26.html과 정확히 동일한 엔진 연산 정밀도 (가볍고 빠릿함)
+const engine = Engine.create({ positionIterations: 12, velocityIterations: 10 });
 
 const ground = Bodies.rectangle(450, 520, 910, 120, { isStatic: true, friction: 1.0 });
 const ceiling = Bodies.rectangle(450, -100, 910, 100, { isStatic: true }); 
@@ -18,21 +20,14 @@ const leftWall = Bodies.rectangle(-10, -4725, 20, 10550, { isStatic: true });
 const rightWall = Bodies.rectangle(910, -4725, 20, 10550, { isStatic: true });
 Composite.add(engine.world, [ground, ceiling, leftWall, rightWall]);
 
-// ... (위쪽 코드 동일) ...
-
 function createCharacter(x, y, name) {
     const core = Bodies.circle(x, y, 25, { label: name + 'Core', density: 1.0 });
     
-    // [조작감 완벽 복구] 두께를 30 -> 15로, 모서리(chamfer)를 10 -> 5로 원상복구. 
-    // game26.html 시절의 날렵한 관성 모멘트를 되찾습니다.
+    // [복구 2] game26.html과 정확히 일치하는 두께(15), 둥글기(5)
+    // isBullet 속성 제거로 둔탁해지는 타격감 복구
     const stick = Bodies.rectangle(x + 60, y, 100, 15, { label: name + 'Stick', chamfer: { radius: 5 }, density: 0.0001 });
-    
-    // [핵심 물리 패치] isBullet: true 속성 부여. 
-    // 두께를 늘리지 않아도 물리 엔진이 탄환(Bullet)처럼 이동 궤적 전체의 충돌을 연속 계산(CCD)하여 절대 관통되지 않음.
-    return Body.create({ parts: [core, stick], friction: 0.8, restitution: 0.8, label: name, isBullet: true });
+    return Body.create({ parts: [core, stick], friction: 0.8, restitution: 0.8, label: name });
 }
-
-// ... (아래쪽 코드 동일) ...
 
 let players = {}; 
 const slots = { player: null, bot: null }; 
@@ -42,7 +37,6 @@ let restartTimer = null;
 const aiState = { active: false };
 
 function resetUniverse() {
-    // 1. 기존에 남아있는 모든 육체를 물리 엔진에서 완벽하게 소각(제거)
     for (let id in players) {
         if (players[id].body) Composite.remove(engine.world, players[id].body);
     }
@@ -51,20 +45,21 @@ function resetUniverse() {
     if (slots.player) {
         const body1 = createCharacter(300, 300, 'player');
         Composite.add(engine.world, body1);
-        players[slots.player] = { body: body1, label: 'player', keys: {}, dash: { active: false, dir: 1, angleMoved: 0 } };
+        // [복구 3] 대시 상태 변수 초기화 (game26 스타일)
+        players[slots.player] = { body: body1, label: 'player', keys: {}, isDashing: false, dashDirection: 1, dashEndTime: 0 };
     }
 
     if (slots.bot) {
         const body2 = createCharacter(600, 300, 'bot');
-        Body.setAngle(body2, Math.PI); // [개선] 2P는 1P를 바라보도록 180도 회전하여 스폰
+        Body.setAngle(body2, Math.PI); 
         Composite.add(engine.world, body2);
-        players[slots.bot] = { body: body2, label: 'bot', keys: {}, dash: { active: false, dir: 1, angleMoved: 0 } };
+        players[slots.bot] = { body: body2, label: 'bot', keys: {}, isDashing: false, dashDirection: 1, dashEndTime: 0 };
         aiState.active = false; 
     } else if (slots.player) {
         const aiBody = createCharacter(600, 300, 'bot');
-        Body.setAngle(aiBody, Math.PI); // [개선] AI도 1P를 바라보도록 180도 회전
+        Body.setAngle(aiBody, Math.PI); 
         Composite.add(engine.world, aiBody);
-        players['AI_BOT'] = { body: aiBody, label: 'bot', keys: {}, dash: { active: false } };
+        players['AI_BOT'] = { body: aiBody, label: 'bot', keys: {}, isDashing: false, dashDirection: 1, dashEndTime: 0 };
         aiState.active = true; 
     }
 
@@ -107,10 +102,11 @@ io.on('connection', (socket) => {
     socket.on('do_dash', (dir) => {
         if (gameState !== 'PLAYING') return;
         const p = players[socket.id];
-        if (p && !p.dash.active) {
-            p.dash.active = true;
-            p.dash.dir = dir;
-            p.dash.angleMoved = 0; 
+        if (p && !p.isDashing) {
+            // [복구 4] game26.html 방식의 대시 타이머 설정 (엔진 내부 시간 기준 +180ms)
+            p.isDashing = true;
+            p.dashDirection = dir;
+            p.dashEndTime = engine.timing.timestamp + 180;
         }
     });
 
@@ -133,13 +129,10 @@ io.on('connection', (socket) => {
         if (!slots.player) {
             gameState = 'WAITING';
             aiState.active = false;
-            
-            // [핵심 픽스] 방이 텅 빌 때, 남은 유령(AI 등)을 물리 엔진에서 확실히 제거
             for (let id in players) {
                 if (players[id].body) Composite.remove(engine.world, players[id].body);
             }
-            players = {}; // 육체를 먼저 지우고 정보를 날려야 함
-            
+            players = {}; 
             clearInterval(restartTimer); 
         } else {
             resetUniverse(); 
@@ -221,30 +214,32 @@ setInterval(() => {
         }
     } else { engine.timing.timeScale = 1.0; }
 
+    const engineTime = engine.timing.timestamp;
+
     for (let id in players) {
         const p = players[id];
         if (!p.body || gameState !== 'PLAYING') continue;
 
+        // AI 로직
         if (id === 'AI_BOT' && aiState.active) {
             let p1Body = players[slots.player] ? players[slots.player].body : null;
             if (p1Body) {
                 let dx = p1Body.position.x - p.body.position.x;
                 let aiSpeedX = p.body.velocity.x;
-                if (dx < -30 && aiSpeedX > -6) Body.setAngularVelocity(p.body, -0.12);
-                else if (dx > 30 && aiSpeedX < 6) Body.setAngularVelocity(p.body, 0.12);
+                if (dx < -30 && aiSpeedX > -6) Body.setAngularVelocity(p.body, -0.15);
+                else if (dx > 30 && aiSpeedX < 6) Body.setAngularVelocity(p.body, 0.15);
             }
             continue;
         }
 
-        if (p.dash && p.dash.active) {
-            const dashSpeed = 0.6;
-            Body.setAngularVelocity(p.body, p.dash.dir * dashSpeed);
-            p.dash.angleMoved += dashSpeed * engine.timing.timeScale;
-            if (p.dash.angleMoved >= Math.PI * 2) {
-                p.dash.active = false;
+        // [복구 5] game26.html과 정확히 동일한 대시 & 이동 로직
+        if (p.isDashing) {
+            if (engineTime >= p.dashEndTime) {
+                p.isDashing = false;
+            } else {
+                Body.setAngularVelocity(p.body, p.dashDirection * 0.6);
             }
-        } 
-        else if (p.keys) {
+        } else if (p.keys) {
             const maxAngularVelocity = 0.3;
             const baseRotationSpeed = 0.15;
             
@@ -257,8 +252,8 @@ setInterval(() => {
         }
     }
 
-    Engine.update(engine, delta / 2);
-    Engine.update(engine, delta / 2);
+    // [복구 6] 서브 스텝 제거 -> 단 1번만 업데이트하여 마찰력 버그 제거
+    Engine.update(engine, delta);
 
     const syncData = { _isSlowMo: isSlowMo }; 
     for (let id in players) {
