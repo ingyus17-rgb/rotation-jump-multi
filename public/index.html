@@ -215,11 +215,10 @@
             ui.style.display = 'block';
         });
 
-        // 7. 조작 신호 송신 로직 (최적화 버전)
+        // 7. 조작 신호 송신 로직 (롤백 버전)
         const keys = { left: false, right: false, isDashing: false, dashDirection: 0 };
         const dashCooldown = 5000;
-        let lastLeftPress = 0, lastRightPress = 0, lastDashTime = 0;
-        const doubleTapThreshold = 250;
+        let lastDashTime = 0;
         const dashUI = document.getElementById('dash-ui');
 
         function triggerDash(direction) {
@@ -229,17 +228,9 @@
             setTimeout(() => { keys.isDashing = false; }, 180); 
         }
 
-        let lastKeysStr = ""; // 이전 조작 상태를 기억할 변수
-
         setInterval(() => {
-            const currentKeysStr = JSON.stringify(keys);
-            
-            // [최적화 핵심] 대시 중이거나 조작 상태(좌/우)가 바뀌었을 때만 서버에 전송
-            // 가만히 있을 때는 통신을 끊어 클라이언트 업로드 과부하 방지
-            if (keys.isDashing || currentKeysStr !== lastKeysStr) {
-                socket.emit('player_input', keys);
-                lastKeysStr = currentKeysStr;
-            }
+            // [복구] 대시 씹힘 현상 방지를 위해 키 상태를 무조건 서버로 전송
+            socket.emit('player_input', keys);
 
             // 대시 UI 갱신 로직
             const absoluteTime = Date.now();
