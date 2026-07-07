@@ -12,14 +12,10 @@
         #dash-ui { position: absolute; bottom: 20px; right: 20px; font-size: 1rem; font-weight: bold; padding: 8px 15px; border-radius: 8px; background: rgba(0,0,0,0.5); border: 2px solid #e94560; color: #fff; z-index: 10; transition: all 0.2s; }
         .dash-ready { border-color: #60e945 !important; color: #60e945 !important; box-shadow: 0 0 15px rgba(96, 233, 69, 0.5); }
         #role-text { color: #ffeb3b; font-weight: bold; font-size: 1.2rem; }
-        
-        /* 불릿 타임 텍스트 CSS */
-        #slow-mo-text { position: absolute; top: 20%; font-size: 6vw; font-weight: bold; color: #e94560; opacity: 0; transition: opacity 0.2s; pointer-events: none; letter-spacing: 5px; text-shadow: 0 0 10px #e94560; text-align: center; width: 100%; z-index: 5;}
-        
-        /* 이펙트 및 UI용 스타일 */
         #ui { position: absolute; top: 30%; font-size: 8vw; font-weight: bold; color: #ffeb3b; text-shadow: 2px 2px 10px rgba(0,0,0,0.8); display: none; z-index: 10; pointer-events: none; text-align: center; width: 100%; }
         @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
         .restart-text { display: block; font-size: 4vw; color: #ffffff; margin-top: 15px; animation: blink 1.5s infinite; text-shadow: 0 0 10px rgba(255,255,255,0.5); }
+        #slow-mo-text { position: absolute; top: 20%; font-size: 6vw; font-weight: bold; color: #e94560; opacity: 0; transition: opacity 0.2s; pointer-events: none; letter-spacing: 5px; text-shadow: 0 0 10px #e94560; text-align: center; width: 100%; z-index: 5;}
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
     <script src="/socket.io/socket.io.js"></script>
@@ -31,21 +27,16 @@
             <p id="role-text">서버 연결 대기 중...</p>
         </div>
         <div id="dash-ui" class="dash-ready">DASH: READY</div>
-        
         <div id="ui">GAME OVER</div>
         <div id="slow-mo-text">BULLET TIME</div>
     </div>
 
     <script>
-        // 1. 소켓 통신 시작
         const socket = io();
         let myRole = null;
 
-        // 2. 물리 엔진 세팅 (Runner 추가, 중력 유지)
         const Engine = Matter.Engine, Render = Matter.Render, Runner = Matter.Runner, Bodies = Matter.Bodies, Body = Matter.Body, Composite = Matter.Composite;
-        
         const engine = Engine.create();
-        // 중력은 기본값(y=1)으로 둡니다. 파편이 바닥으로 떨어져야 하니까요!
 
         const render = Render.create({ 
             element: document.getElementById('game-container'), 
@@ -58,23 +49,12 @@
 
         const clientBodies = {};
 
-        // 3. 더미 캐릭터 생성 (서버와 동일한 질량 중심 세팅 + 고정)
         function createDummyCharacter(x, y, coreColor, stickColor) {
-            const core = Bodies.circle(x, y, 25, { 
-                render: { fillStyle: coreColor }, 
-                density: 1.0 
-            });
-            const stick = Bodies.rectangle(x + 60, y, 100, 15, { 
-                render: { fillStyle: stickColor }, 
-                chamfer: { radius: 5 }, 
-                density: 0.0001 
-            });
-            
-            // isStatic: true 를 추가해 중력에 안 떨어지고 허공에 고정되게 합니다.
+            const core = Bodies.circle(x, y, 25, { render: { fillStyle: coreColor }, density: 1.0 });
+            const stick = Bodies.rectangle(x + 60, y, 100, 15, { render: { fillStyle: stickColor }, chamfer: { radius: 5 }, density: 0.0001 });
             return Body.create({ parts: [core, stick], isSensor: true, isStatic: true }); 
         }
 
-        // 4. 서버 이벤트 수신 (역할 부여 및 동기화)
         socket.on('role_assign', (data) => {
             myRole = data.label;
             document.getElementById('role-text').innerText = myRole === 'player' ? "당신은 1P (노란색) 입니다!" : "당신은 2P (파란색) 입니다!";
@@ -84,12 +64,10 @@
             document.getElementById('role-text').innerText = msg;
         });
 
-        // 캔버스와 텍스트 요소를 가져옵니다.
         const canvasElement = document.querySelector('canvas');
         const slowMoText = document.getElementById('slow-mo-text');
 
         socket.on('sync_state', (gameState) => {
-            // ▼▼▼ 불릿 타임 화면 연출 ▼▼▼
             if (gameState._isSlowMo) {
                 canvasElement.style.borderColor = '#e94560'; 
                 canvasElement.style.boxShadow = '0 10px 40px rgba(233, 69, 96, 0.5)'; 
@@ -99,10 +77,9 @@
                 canvasElement.style.boxShadow = '0 10px 30px rgba(0,0,0,0.8)'; 
                 slowMoText.style.opacity = '0';
             }
-            // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
             for (let id in gameState) {
-                if (id === '_isSlowMo') continue; // 불릿 타임 신호는 좌표 계산에서 제외
+                if (id === '_isSlowMo') continue; 
 
                 const serverData = gameState[id];
                 
@@ -120,7 +97,6 @@
                 Body.setAngle(clientBodies[id], serverData.angle);
             }
 
-            // 나간 플레이어 삭제
             for (let id in clientBodies) {
                 if (!gameState[id]) {
                     Composite.remove(engine.world, clientBodies[id]);
@@ -129,7 +105,6 @@
             }
         });
 
-        // 5. 시각적 이펙트 (클라이언트 독자 연산)
         function createSparks(x, y) {
             const particles = [];
             const sparkColors = ['#ffeb3b', '#ff9800', '#ffffff'];
@@ -167,18 +142,15 @@
             setTimeout(() => { Composite.remove(engine.world, particles); }, 3000);
         }
 
-        // 6. 서버 타격 및 상태 이벤트 수신기
         const ui = document.getElementById('ui');
 
         socket.on('create_spark', (data) => {
             createSparks(data.x, data.y);
         });
 
-        // ▼▼▼ 여기서부터 덮어씌우세요 ▼▼▼
         socket.on('game_over', (data) => {
             createExplosion(data.x, data.y, data.loserLabel);
             
-            // 숫자가 갱신될 수 있도록 3을 <span> 태그로 감싸줍니다.
             const restartMsg = "<br><span class='restart-text'><span id='countdown-num'>3</span>초 후 재시작됩니다...</span>";
 
             if (myRole === data.winnerLabel) {
@@ -193,32 +165,27 @@
             ui.style.display = 'block';
         });
 
-        // 매 초마다 서버가 보내는 카운트다운 숫자(2, 1)를 화면에 즉각 렌더링
         socket.on('countdown', (count) => {
             const countSpan = document.getElementById('countdown-num');
             if (countSpan) {
                 countSpan.innerText = count;
             }
         });
-        // ▲▲▲ 여기까지 덮어씌우세요 ▲▲▲
 
-        // ▼▼▼ 새롭게 추가되는 리플레이 및 대기열 로직 ▼▼▼
         socket.on('game_reset', () => {
-            // 화면의 글씨를 지우고 즉시 전투 재개
             ui.style.display = 'none'; 
         });
 
         socket.on('waiting_players', () => {
-            // 한 명이 나갔을 때 남은 사람에게 띄우는 UI
             ui.innerHTML = "상대방을 기다리는 중...<br><span class='restart-text'>WAITING FOR OPPONENT</span>";
             ui.style.color = '#ffffff';
             ui.style.display = 'block';
         });
 
-        // 7. 조작 신호 송신 로직 (롤백 버전)
         const keys = { left: false, right: false, isDashing: false, dashDirection: 0 };
         const dashCooldown = 5000;
-        let lastDashTime = 0;
+        let lastLeftPress = 0, lastRightPress = 0, lastDashTime = 0;
+        const doubleTapThreshold = 250;
         const dashUI = document.getElementById('dash-ui');
 
         function triggerDash(direction) {
@@ -229,10 +196,8 @@
         }
 
         setInterval(() => {
-            // [복구] 대시 씹힘 현상 방지를 위해 키 상태를 무조건 서버로 전송
             socket.emit('player_input', keys);
 
-            // 대시 UI 갱신 로직
             const absoluteTime = Date.now();
             if (absoluteTime - lastDashTime >= dashCooldown) { 
                 dashUI.innerText = "DASH: READY"; dashUI.classList.add('dash-ready'); 
@@ -289,7 +254,6 @@
         window.addEventListener('touchmove', handleTouch, { passive: false });
         window.addEventListener('touchend', handleTouch, { passive: false });
 
-        // 화면 렌더링 및 클라이언트 물리 시간 가동 시작
         Render.run(render);
         Runner.run(Runner.create(), engine);
     </script>
