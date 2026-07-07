@@ -10,12 +10,15 @@ const io = new Server(server);
 app.use(express.static('public'));
 
 const { Engine, Bodies, Body, Composite, Events } = Matter;
-const engine = Engine.create({ positionIterations: 12, velocityIterations: 10 });
+// 엔진 안정성(관통 방지)을 위해 반복 연산 횟수 상향
+const engine = Engine.create({ positionIterations: 16, velocityIterations: 12 });
 
+// 우주 밖으로 날아가는 것을 방지하기 위해 천장(ceiling) 추가
 const ground = Bodies.rectangle(450, 520, 910, 120, { isStatic: true, friction: 1.0 });
+const ceiling = Bodies.rectangle(450, -100, 910, 100, { isStatic: true }); 
 const leftWall = Bodies.rectangle(-10, -4725, 20, 10550, { isStatic: true });
 const rightWall = Bodies.rectangle(910, -4725, 20, 10550, { isStatic: true });
-Composite.add(engine.world, [ground, leftWall, rightWall]);
+Composite.add(engine.world, [ground, ceiling, leftWall, rightWall]);
 
 function createCharacter(x, y, name) {
     const core = Bodies.circle(x, y, 25, { label: name + 'Core', density: 1.0 });
@@ -29,9 +32,7 @@ let gameState = 'WAITING';
 let restartTimer = null;
 
 const aiState = {
-    active: false,
-    direction: 1,
-    lastDist: 9999
+    active: false
 };
 
 function resetUniverse() {
@@ -54,11 +55,11 @@ function resetUniverse() {
         players[slots.bot] = { body: body2, label: 'bot' };
         aiState.active = false; 
     } else if (slots.player) {
+        // 1P 혼자일 때 AI 스폰
         const aiBody = createCharacter(600, 300, 'bot');
         Composite.add(engine.world, aiBody);
         players['AI_BOT'] = { body: aiBody, label: 'bot' };
         aiState.active = true; 
-        aiState.lastDist = 9999;
     }
 
     gameState = (slots.player) ? 'PLAYING' : 'WAITING';
@@ -214,25 +215,6 @@ Events.on(engine, 'collisionStart', (event) => {
     }
 });
 
-setInterval(() => {
-    if (!aiState.active || gameState !== 'PLAYING') return;
-    
-    let p1 = null;
-    let ai = null;
-    
-    if (players[slots.player]) p1 = players[slots.player];
-    if (players['AI_BOT']) ai = players['AI_BOT'];
-    
-    if (p1 && p1.body && ai && ai.body) {
-        const dist = Math.hypot(p1.body.position.x - ai.body.position.x, p1.body.position.y - ai.body.position.y);
-        
-        if (dist > aiState.lastDist) {
-            aiState.direction *= -1; 
-        }
-        aiState.lastDist = dist;
-    }
-}, 1000);
-
 let lastTime = Date.now();
 setInterval(() => {
     const now = Date.now();
@@ -266,13 +248,22 @@ setInterval(() => {
         engine.timing.timeScale = 1.0;
     }
 
+    // ==========================================
+    // [스마트 AI 로직] 속도 제한형 추적 알고리즘 적용
+    // ==========================================
     if (aiState.active && gameState === 'PLAYING') {
-        if (players['AI_BOT'] && players['AI_BOT'].body) {
-            const aiBody = players['AI_BOT'].body;
-            const maxAngularVelocity = 0.3;
-            Body.setAngularVelocity(aiBody, aiState.direction * 0.15);
-            if (Math.abs(aiBody.angularVelocity) > maxAngularVelocity) {
-                Body.setAngularVelocity(aiBody, Math.sign(aiBody.angularVelocity) * maxAngularVelocity);
+        let p1Body = players[slots.player] ? players[slots.player].body : null;
+        let aiBody = players['AI_BOT'] ? players['AI_BOT'].body : null;
+
+        if (p1Body && aiBody) {
+            let dx = p1Body.position.x - aiBody.position.x;
+            let aiSpeedX = aiBody.velocity.x;
+            
+            // 거리가 멀고, AI가 과속(돌진) 상태가 아닐 때만 회전력을 주어 안전하게 굴러가도록 통제
+            if (dx < -30 && aiSpeedX > -6) {
+                Body.setAngularVelocity(aiBody, -0.12);
+            } else if (dx > 30 && aiSpeedX < 6) {
+                Body.setAngularVelocity(aiBody, 0.12);
             }
         }
     }
